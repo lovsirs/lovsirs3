@@ -1,0 +1,210 @@
+
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local description
+local connection
+
+if getgenv().AvatarChanger then
+	getgenv().AvatarChanger()
+end
+
+local limbMap = {
+	["Left Arm"] = {"LeftUpperArm", "LeftLowerArm", "LeftHand"},
+	["Right Arm"] = {"RightUpperArm", "RightLowerArm", "RightHand"},
+	["Left Leg"] = {"LeftUpperLeg", "LeftLowerLeg", "LeftFoot"},
+	["Right Leg"] = {"RightUpperLeg", "RightLowerLeg", "RightFoot"},
+	Torso = {"UpperTorso", "LowerTorso"},
+}
+
+local function getUserId(target)
+	local id = tonumber(target)
+	if id then
+		return id
+	end
+	local ok, result = pcall(function()
+		return Players:GetUserIdFromNameAsync(tostring(target))
+	end)
+	return ok and result or nil
+end
+
+local function getDescription(userId)
+	for i = 1, 5 do
+		local ok, result = pcall(function()
+			return Players:GetHumanoidDescriptionFromUserIdAsync(userId)
+		end)
+		if ok and result then
+			return result
+		end
+		task.wait(0.2 * i)
+	end
+end
+
+local function findPart(char, name)
+	local part = char:FindFirstChild(name)
+	if part and part:IsA("BasePart") then
+		return part
+	end
+	for _, alt in ipairs(limbMap[name] or {}) do
+		local p = char:FindFirstChild(alt)
+		if p and p:IsA("BasePart") then
+			return p
+		end
+	end
+end
+
+local function clean(char)
+	for _, v in ipairs(char:GetChildren()) do
+		if v:IsA("Accessory") or v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") then
+			v:Destroy()
+		end
+	end
+end
+
+local function attach(char, hum, original)
+	local acc = original:Clone()
+	for _, d in ipairs(acc:GetDescendants()) do
+		if d:IsA("Weld") or d:IsA("WeldConstraint") or d:IsA("Motor6D") then
+			d:Destroy()
+		end
+	end
+
+	local handle = acc:FindFirstChild("Handle")
+	if not handle or not handle:IsA("BasePart") then
+		acc:Destroy()
+		return
+	end
+	handle.Anchored = false
+	handle.CanCollide = false
+	handle.Massless = true
+
+	local oldHandle = original:FindFirstChild("Handle")
+	local oldWeld = oldHandle and oldHandle:FindFirstChild("AccessoryWeld")
+	local part, c0, c1
+
+	if oldWeld and oldWeld:IsA("Weld") and oldWeld.Part1 then
+		part = findPart(char, oldWeld.Part1.Name)
+		c0, c1 = oldWeld.C0, oldWeld.C1
+	end
+
+	if not part then
+		local att = handle:FindFirstChildOfClass("Attachment")
+		if att then
+			for _, d in ipairs(char:GetDescendants()) do
+				if d:IsA("Attachment") and d.Name == att.Name and not d:IsDescendantOf(acc) then
+					part, c0, c1 = d.Parent, att.CFrame, d.CFrame
+					break
+				end
+			end
+		end
+	end
+
+	if not part then
+		part, c0, c1 = char:FindFirstChild("Head"), CFrame.new(0, 0.5, 0), CFrame.new()
+	end
+
+	if not part then
+		pcall(function()
+			hum:AddAccessory(acc)
+		end)
+		return
+	end
+
+	local weld = Instance.new("Weld")
+	weld.Name = "AccessoryWeld"
+	weld.Part0 = handle
+	weld.Part1 = part
+	weld.C0 = c0
+	weld.C1 = c1
+	weld.Parent = handle
+	acc.Parent = char
+end
+
+local function apply(char)
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return
+	end
+
+	local ok, model = pcall(function()
+		return Players:CreateHumanoidModelFromDescriptionAsync(description, hum.RigType, Enum.AssetTypeVerification.Always)
+	end)
+	if not ok or not model then
+		return
+	end
+
+	model.Parent = ReplicatedStorage
+	RunService.Heartbeat:Wait()
+	clean(char)
+
+	for _, item in ipairs(model:GetChildren()) do
+		if item:IsA("Accessory") then
+			attach(char, hum, item)
+		elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") then
+			item:Clone().Parent = char
+		end
+	end
+
+	local colors = model:FindFirstChildOfClass("BodyColors")
+	if colors then
+		local mine = char:FindFirstChildOfClass("BodyColors") or Instance.new("BodyColors", char)
+		mine.HeadColor3 = colors.HeadColor3
+		mine.TorsoColor3 = colors.TorsoColor3
+		mine.LeftArmColor3 = colors.LeftArmColor3
+		mine.RightArmColor3 = colors.RightArmColor3
+		mine.LeftLegColor3 = colors.LeftLegColor3
+		mine.RightLegColor3 = colors.RightLegColor3
+	end
+
+	local head = char:FindFirstChild("Head")
+	local newHead = model:FindFirstChild("Head")
+	local face = newHead and newHead:FindFirstChildOfClass("Decal")
+	if head and face then
+		local old = head:FindFirstChildOfClass("Decal")
+		if old then
+			old:Destroy()
+		end
+		face:Clone().Parent = head
+	end
+
+	model:Destroy()
+end
+
+local function run(char)
+	char:WaitForChild("Humanoid")
+
+	local waited = 0
+	while not player:HasAppearanceLoaded() and waited < 6 do
+		task.wait(0.1)
+		waited += 0.1
+	end
+
+	for _ = 1, 3 do
+		if not char.Parent then
+			return
+		end
+		apply(char)
+		task.wait(1)
+	end
+end
+
+local userId = getUserId(TARGET)
+description = userId and getDescription(userId)
+
+if not description then
+	warn("avatar changer: could not load " .. tostring(TARGET))
+	return
+end
+
+connection = player.CharacterAdded:Connect(run)
+
+if player.Character then
+	task.spawn(run, player.Character)
+end
+
+getgenv().AvatarChanger = function()
+	connection:Disconnect()
+end
